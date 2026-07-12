@@ -9,6 +9,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(String, unique=True, index=True, nullable=False, default=lambda: str(uuid4()))
     email = Column(String, unique=True, index=True, nullable=False)
+    username = Column(String, nullable=True)
     auth_key_hash = Column(String, nullable=False)  # bcrypt hash of client-derived auth key
     encrypted_master_key = Column(LargeBinary, nullable=False)
     salt = Column(LargeBinary, nullable=False)

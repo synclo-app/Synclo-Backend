@@ -35,6 +35,7 @@ from app.schemas.schemas import (
     RefreshTokenRequest,
     PasswordChange,
     SaltResponse,
+    UsernameUpdate,
 )
 from app.services.auth import (
     create_access_token,
@@ -117,6 +118,7 @@ async def register(user: UserRegisterWithDevice, db: Session = Depends(get_db)):
         new_user = User(
             user_id=str(uuid4()),
             email=user.email,
+            username=user.username,
             auth_key_hash=auth_key_hash,
             encrypted_master_key=encrypted_mk_bytes,
             salt=salt_bytes,
@@ -189,7 +191,8 @@ async def register(user: UserRegisterWithDevice, db: Session = Depends(get_db)):
     return {
         "access_token": access_token,
         "refresh_token": plain_refresh_token,
-        "token_type": "bearer"
+        "token_type": "bearer",
+        "username": new_user.username
     }
 
 
@@ -421,7 +424,8 @@ def refresh_token(
     return {
         "access_token": access_token,
         "refresh_token": new_refresh_plain,
-        "token_type": "bearer"
+        "token_type": "bearer",
+        "username": _u.username
     }
 
 
@@ -503,3 +507,42 @@ def change_password(
     db.refresh(db_user)
     
     return {"message": "Password changed successfully. Master key re-wrapped."}
+
+
+@router.put("/user/username", dependencies=[Depends(RateLimiter(times=5, seconds=60))])
+async def update_username(
+    data: UsernameUpdate,
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Decode token to extract device_id
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        device_id = payload.get("device_id")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Update in DB
+    _cu: Any = current_user
+    db_user = db.query(User).filter_by(id=_cu.id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    _dbu: Any = db_user
+    _dbu.username = data.username
+    db.commit()
+    db.refresh(db_user)
+
+    # Broadcast update to other devices
+    await manager.broadcast_to_user(
+        user_id=_cu.user_id,
+        message={
+            "type": "username_updated",
+            "username": data.username
+        },
+        exclude_device=device_id
+    )
+    
+    return {"message": "Username updated successfully", "username": data.username}
+

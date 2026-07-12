@@ -41,6 +41,7 @@ class Token(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    username: Optional[str] = None
 
 class TokenWithE2EE(Token):
     encrypted_master_key: str  # base64 encoded
@@ -50,11 +51,13 @@ class TokenWithE2EE(Token):
 class UserResponse(BaseModel):
     """Safe user serialization (no hashes/keys)"""
     email: str
+    username: Optional[str] = None
     kdf_version: int
 
 class UserWithE2EE(BaseModel):
     """User with encrypted material (for client-side decryption)"""
     email: str
+    username: Optional[str] = None
     encrypted_master_key: str  # base64 encoded
     salt: str  # base64 encoded
     kdf_version: int
@@ -71,6 +74,7 @@ class UserLoginWithDevice(BaseModel):
 
 class UserRegisterWithDevice(BaseModel):
     email: EmailStr
+    username: Optional[str] = None
     auth_key: str  # base64 encoded, client-derived HKDF-based authentication key
     device_id: str
     device_name: Optional[str] = "Unnamed Device"
@@ -99,3 +103,8 @@ class ClipboardSyncResponse(BaseModel):
     next_offset: int
     has_more: bool
     total_count: int
+
+
+class UsernameUpdate(BaseModel):
+    username: str
+

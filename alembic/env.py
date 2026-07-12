@@ -23,6 +23,7 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from app.core.config import Settings
 from app.core.database import Base  # This comes from your `database.py`
+import app.models.models  # Register models on Base.metadata
 
 # Ensure Alembic uses the same database URL as the app
 config.set_main_option("sqlalchemy.url", Settings.DATABASE_URL)

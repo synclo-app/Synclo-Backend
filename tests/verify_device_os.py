@@ -68,6 +68,7 @@ def test_device_os():
         print(f"Registering user: {email}")
         reg_data = {
             "email": email,
+            "username": "test_username",
             "auth_key": auth_key,
             "device_id": device_id,
             "device_name": "Test Device 1",
@@ -80,8 +81,9 @@ def test_device_os():
         resp = client.post("/api/v1/register", json=reg_data)
         assert resp.status_code == 200, f"Registration failed: {resp.text}"
         res = resp.json()
+        assert res.get("username") == "test_username", f"Username mismatch! Expected 'test_username', got {res.get('username')}"
         token = res["access_token"]
-        print("Registration successful.")
+        print("Registration successful with username.")
         
         # 2. Check Device OS via GET /devices
         print("Checking device OS...")
@@ -110,8 +112,9 @@ def test_device_os():
         resp = client.post("/api/v1/login", json=login_data)
         assert resp.status_code == 200, f"Login failed: {resp.text}"
         res = resp.json()
+        assert res.get("username") == "test_username", f"Username mismatch on login! Expected 'test_username', got {res.get('username')}"
         token_2 = res["access_token"]
-        print("Login successful.")
+        print("Login successful with username.")
         
         # 4. Check Device 2 OS
         print("Checking device 2 OS...")

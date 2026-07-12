@@ -12,6 +12,7 @@ def user_to_e2ee_response(user: User) -> UserWithE2EE:
     u: Any = user
     return UserWithE2EE(
         email=u.email,
+        username=u.username,
         encrypted_master_key=base64.b64encode(u.encrypted_master_key).decode('utf-8'),
         salt=base64.b64encode(u.salt).decode('utf-8'),
         kdf_version=u.kdf_version

@@ -36,6 +36,7 @@ from app.schemas.schemas import (
     PasswordChange,
     SaltResponse,
     UsernameUpdate,
+    UserResponse,
 )
 from app.services.auth import (
     create_access_token,
@@ -545,4 +546,13 @@ async def update_username(
     )
     
     return {"message": "Username updated successfully", "username": data.username}
+
+
+@router.get("/user", response_model=UserResponse, dependencies=[Depends(RateLimiter(times=20, seconds=60))])
+def get_user_profile(current_user: User = Depends(get_current_user)):
+    """
+    Retrieve current user's profile details.
+    """
+    return current_user
+
 

@@ -50,9 +50,13 @@ class TokenWithE2EE(Token):
 
 class UserResponse(BaseModel):
     """Safe user serialization (no hashes/keys)"""
+    user_id: str
     email: str
     username: Optional[str] = None
     kdf_version: int
+
+    class Config:
+        from_attributes = True
 
 class UserWithE2EE(BaseModel):
     """User with encrypted material (for client-side decryption)"""

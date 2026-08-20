@@ -54,6 +54,7 @@ def sync_clipboard(
         raise HTTPException(status_code=400, detail="ciphertext too large")
 
     new_timestamp = data.timestamp.replace(tzinfo=None) # Ensure naive for DB comparison if needed
+    pinned_at = (data.pinned_at.replace(tzinfo=None) if data.pinned_at else datetime.now(timezone.utc).replace(tzinfo=None)) if data.is_pinned else None
 
     # Upsert Logic: Check if ID exists
     existing_entry = db.query(Clipboard).filter_by(clipboard_id=data.id, user_id=user_id).first()
@@ -66,6 +67,7 @@ def sync_clipboard(
         _e.blob_version = data.blob_version
         _e.timestamp = new_timestamp
         _e.is_pinned = data.is_pinned
+        _e.pinned_at = pinned_at
         _e.updated_at = datetime.now(timezone.utc)
         db.commit()
         return {"status": "clipboard updated", "id": _e.clipboard_id}
@@ -79,6 +81,7 @@ def sync_clipboard(
             blob_version=data.blob_version,
             timestamp=new_timestamp, # Use Client Timestamp
             is_pinned=data.is_pinned,
+            pinned_at=pinned_at,
             updated_at=datetime.now(timezone.utc)
         )
         db.add(new_entry)
@@ -137,45 +140,49 @@ def get_sync_clipboard(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    _cu: Any = current_user
+    user_id: str = _cu.user_id
+
     # Safety Check: If 'since' is older than retention period, return 410 Gone
-    # This forces the client to re-download everything, ensuring no zombie items (entries deleted on server but kept on client)
     if since:
-        # Ensure since is aware
         since_utc = since.replace(tzinfo=timezone.utc) if since.tzinfo is None else since
         retention_days = Settings.TOMBSTONE_RETENTION_DAYS
-        # Cutoff calculations
         cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
-        
         if since_utc < cutoff:
-            # Client is too old. We might have deleted tombstones that they need to know about.
-            # They must wipe and re-sync.
             raise HTTPException(status_code=410, detail="Sync state expired. Please wipe local data and resync.")
 
-    _cu: Any = current_user
-    query = db.query(Clipboard).filter(Clipboard.user_id == _cu.user_id)
-    
+    query = db.query(Clipboard).filter(Clipboard.user_id == user_id)
     if since:
-         # Ensure since is offset-aware UTC or naive treated as UTC
-         since_utc = since.replace(tzinfo=timezone.utc) if since.tzinfo is None else since
-         # Use updated_at for delta sync
-         query = query.filter(Clipboard.updated_at > since_utc)
-    
-    # Order by updated_at asc to ensure we get the oldest changes first if limited
-    # Apply offset and limit
+        since_utc = since.replace(tzinfo=timezone.utc) if since.tzinfo is None else since
+        query = query.filter(Clipboard.updated_at > since_utc)
+
     entries = query.order_by(Clipboard.updated_at.asc()).offset(offset).limit(limit).all()
 
-    serialized = [clipboard_to_response(entry).model_dump() for entry in entries]
-
     return {
-        "entries": serialized,
-        "next_offset": offset + len(entries), # Useful for client sidebar/debugging if needed
+        "entries": [clipboard_to_response(entry).model_dump() for entry in entries],
+        "next_offset": offset + len(entries),
         "has_more": len(entries) == limit,
-        "total_count": len(entries) # This is just the page count, not total.
+        "total_count": len(entries)
     }
 
 
+@router.get("/clipboard/{clipboard_id}", response_model=ClipboardOut, dependencies=[Depends(RateLimiter(times=30, seconds=60))])
+def get_clipboard_by_id(
+    clipboard_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    _cu: Any = current_user
+    user_id: str = _cu.user_id
+    entry = db.query(Clipboard).filter_by(clipboard_id=clipboard_id, user_id=user_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Clipboard entry not found")
+
+    return clipboard_to_response(entry)
+
+
 @router.delete("/clipboard/{clipboard_id}", dependencies=[Depends(RateLimiter(times=10, seconds=60))])
-async def delete_clipboard_entry(
+async def delete_clipboard_item(
     clipboard_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -197,6 +204,7 @@ async def delete_clipboard_entry(
     # Soft Delete
     _entry.is_deleted = True
     _entry.is_pinned = False
+    _entry.pinned_at = None
     _entry.deleted_at = datetime.now(timezone.utc)
     _entry.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -208,6 +216,7 @@ async def delete_clipboard_entry(
             "id": clipboard_id,
             "is_deleted": True,
             "is_pinned": False,
+            "pinned_at": None,
             "timestamp": _entry.deleted_at.isoformat() + "Z",
             "ciphertext": None,
             "nonce": None,
@@ -237,29 +246,32 @@ async def delete_clipboard_history(
         return {"message": "No clipboard entries to delete."}
 
     now = datetime.now(timezone.utc)
-    clipboard_ids = []
+    deleted_entries = []  # (clipboard_id, blob_version) pairs
 
     for entry in active_entries:
         _e: Any = entry
         _e.is_deleted = True
+        _e.is_pinned = False
+        _e.pinned_at = None
         _e.deleted_at = now
         _e.updated_at = now
-        clipboard_ids.append(_e.clipboard_id)
+        deleted_entries.append((_e.clipboard_id, _e.blob_version))
         
     db.commit()
     
     # Broadcast deletion of all entries
-    for clipboard_id in clipboard_ids:
+    for clipboard_id, blob_version in deleted_entries:
         await manager.broadcast_to_user(
             user_id=user_id,
             message={
                 "id": clipboard_id,
                 "is_deleted": True,
                 "is_pinned": False,
+                "pinned_at": None,
                 "timestamp": now.isoformat() + "Z",
                 "ciphertext": None,
                 "nonce": None,
-                "blob_version": 1
+                "blob_version": blob_version
             }
         )
     

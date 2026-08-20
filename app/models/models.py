@@ -23,6 +23,7 @@ class Device(Base):
     device_name = Column(String)
     os = Column(String, nullable=True)
     user_id = Column(String, ForeignKey("users.user_id"), index=True)
+    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=True, index=True)
 
     owner = relationship("User", back_populates="devices")
 
@@ -38,6 +39,7 @@ class Clipboard(Base):
     is_deleted = Column(Boolean, default=False, index=True)
     deleted_at = Column(DateTime, nullable=True, index=True)
     is_pinned = Column(Boolean, default=False, server_default="0", index=True, nullable=False)
+    pinned_at = Column(DateTime, nullable=True, index=True)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True, nullable=False)
 
     owner = relationship("User")

@@ -1,5 +1,6 @@
 # app/endpoints/device_endpoints.py
 
+from datetime import datetime, timezone
 from typing import Any, List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -30,12 +31,21 @@ async def register_device(
     if existing:
         if _ex.user_id != current_user_id:
             raise HTTPException(status_code=403, detail="Device ID belongs to another user")
-        return existing
+        _ex.last_seen = datetime.now(timezone.utc)
+        db.commit()
+        return DeviceOut(
+            device_id=_ex.device_id,
+            device_name=_ex.device_name,
+            os=_ex.os,
+            last_seen=_ex.last_seen,
+            is_online=manager.is_device_online(current_user_id, _ex.device_id)
+        )
     new_device = Device(
         device_id=device.device_id,
         device_name=device.device_name,
         os=device.os,
-        user_id=current_user_id
+        user_id=current_user_id,
+        last_seen=datetime.now(timezone.utc)
     )
     try:
         db.add(new_device)
@@ -53,7 +63,13 @@ async def register_device(
                 }
             }
         )
-        return new_device
+        return DeviceOut(
+            device_id=new_device.device_id,
+            device_name=new_device.device_name,
+            os=new_device.os,
+            last_seen=new_device.last_seen,
+            is_online=manager.is_device_online(current_user_id, new_device.device_id)
+        )
     except Exception:
         db.rollback()
         # Handle race condition where device was inserted by another request
@@ -62,7 +78,13 @@ async def register_device(
             _ex2: Any = existing
             if _ex2.user_id != current_user_id:
                 raise HTTPException(status_code=403, detail="Device ID belongs to another user")
-            return existing
+            return DeviceOut(
+                device_id=_ex2.device_id,
+                device_name=_ex2.device_name,
+                os=_ex2.os,
+                last_seen=_ex2.last_seen,
+                is_online=manager.is_device_online(current_user_id, _ex2.device_id)
+            )
         raise HTTPException(status_code=400, detail="Failed to register device")
 
 
@@ -71,7 +93,17 @@ def get_devices(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    return db.query(Device).filter(Device.user_id == current_user.user_id).all()
+    devices = db.query(Device).filter(Device.user_id == current_user.user_id).all()
+    return [
+        DeviceOut(
+            device_id=d.device_id,
+            device_name=d.device_name,
+            os=d.os,
+            last_seen=d.last_seen,
+            is_online=manager.is_device_online(current_user.user_id, d.device_id)
+        )
+        for d in devices
+    ]
 
 
 @router.delete("/devices/{device_id}", dependencies=[Depends(RateLimiter(times=10, seconds=60))])

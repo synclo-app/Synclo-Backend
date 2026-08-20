@@ -91,6 +91,22 @@ async def websocket_sync(websocket: WebSocket):
     # Connection validated successfully
     logger.info(f"WebSocket connection accepted for user_id={user_id}, device_id={device_id}")
     await manager.connect(user_id, device_id, websocket)
+
+    # Dedicated session for last_seen updates (WebSocket has no DI scope)
+    last_seen_session = SessionLocal()
+
+    def update_device_last_seen(uid: str, dev_id: str):
+        try:
+            dev = last_seen_session.query(Device).filter_by(user_id=uid, device_id=dev_id).first()
+            if dev:
+                _d: Any = dev
+                _d.last_seen = datetime.now(timezone.utc)
+                last_seen_session.commit()
+        except Exception as err:
+            last_seen_session.rollback()
+            logger.warning(f"Failed to update device last_seen: {err}")
+
+    await asyncio.to_thread(update_device_last_seen, user_id, device_id)
     
     try:
         while True:
@@ -108,6 +124,7 @@ async def websocket_sync(websocket: WebSocket):
                     pong = await asyncio.wait_for(websocket.receive_json(), timeout=10)
                     if pong.get("type") != "pong":
                         raise ValueError("Invalid pong")
+                    await asyncio.to_thread(update_device_last_seen, user_id, device_id)
                     continue
                 except WebSocketDisconnect:
                     # Connection already closed by client, don't try to close again
@@ -124,8 +141,9 @@ async def websocket_sync(websocket: WebSocket):
 
             if data.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
+                await asyncio.to_thread(update_device_last_seen, user_id, device_id)
                 continue
-            
+
             # Unified Message Handling (Upsert & Delete)
             # We no longer separate "type": "delete". Everything is an event.
             
@@ -133,6 +151,7 @@ async def websocket_sync(websocket: WebSocket):
             # Client determines deletion status
             is_deleted = data.get("is_deleted", False)
             is_pinned = data.get("is_pinned", False)
+            pinned_at_str = data.get("pinned_at")
             
             msg_ts_str = data.get("timestamp")
             ciphertext = data.get("ciphertext")
@@ -158,6 +177,17 @@ async def websocket_sync(websocket: WebSocket):
             except ValueError:
                 await websocket.send_json({"type": "error", "message": "Invalid timestamp format (ISO8601 required)"})
                 continue
+
+            pinned_at_val = None
+            if is_pinned and not is_deleted:
+                if pinned_at_str:
+                    try:
+                        pinned_at_val = datetime.fromisoformat(pinned_at_str.replace('Z', '+00:00')).replace(tzinfo=None)
+                    except ValueError:
+                        await websocket.send_json({"type": "error", "message": "Invalid pinned_at format (ISO8601 required)"})
+                        continue
+                else:
+                    pinned_at_val = datetime.now(timezone.utc).replace(tzinfo=None)
             
             ciphertext_bytes = None
             nonce_bytes = None
@@ -199,12 +229,14 @@ async def websocket_sync(websocket: WebSocket):
                             _ex.ciphertext = None
                             _ex.nonce = None
                             _ex.is_pinned = False
+                            _ex.pinned_at = None
                             _ex.deleted_at = msg_ts
                             _ex.updated_at = datetime.now(timezone.utc)
                         else:
                             _ex.ciphertext = ciphertext_bytes
                             _ex.nonce = nonce_bytes
                             _ex.is_pinned = is_pinned
+                            _ex.pinned_at = pinned_at_val
                             _ex.deleted_at = None
                             _ex.updated_at = datetime.now(timezone.utc)
 
@@ -214,6 +246,7 @@ async def websocket_sync(websocket: WebSocket):
                             "timestamp": _ex.timestamp,
                             "is_deleted": _ex.is_deleted,
                             "is_pinned": _ex.is_pinned,
+                            "pinned_at": _ex.pinned_at,
                             "blob_version": _ex.blob_version
                         }
                     else:
@@ -226,6 +259,7 @@ async def websocket_sync(websocket: WebSocket):
                             timestamp=msg_ts,
                             is_deleted=is_deleted,
                             is_pinned=is_pinned if not is_deleted else False,
+                            pinned_at=pinned_at_val if not is_deleted else None,
                             deleted_at=msg_ts if is_deleted else None,
                             updated_at=datetime.now(timezone.utc)
                         )
@@ -237,6 +271,7 @@ async def websocket_sync(websocket: WebSocket):
                             "timestamp": _ne.timestamp,
                             "is_deleted": _ne.is_deleted,
                             "is_pinned": _ne.is_pinned,
+                            "pinned_at": _ne.pinned_at,
                             "blob_version": _ne.blob_version
                         }
                 except Exception as e:
@@ -255,9 +290,10 @@ async def websocket_sync(websocket: WebSocket):
             # Broadcast to other devices (excluding sender)
             broadcast_payload = {
                 "id": entry_data["id"],
-                "timestamp": entry_data["timestamp"].isoformat(),
+                "timestamp": (entry_data["timestamp"].isoformat() + "Z") if hasattr(entry_data["timestamp"], "isoformat") else str(entry_data["timestamp"]),
                 "is_deleted": entry_data["is_deleted"],
                 "is_pinned": entry_data["is_pinned"],
+                "pinned_at": entry_data["pinned_at"].isoformat() + "Z" if entry_data.get("pinned_at") else None,
                 "blob_version": entry_data["blob_version"]
             }
             
@@ -292,3 +328,7 @@ async def websocket_sync(websocket: WebSocket):
             pass
     finally:
         manager.disconnect(user_id, device_id)
+        try:
+            await asyncio.to_thread(update_device_last_seen, user_id, device_id)
+        finally:
+            last_seen_session.close()

@@ -44,13 +44,17 @@ mock_limiter_depends = MagicMock()
 mock_limiter_depends.RateLimiter = MockRateLimiter
 sys.modules["fastapi_limiter.depends"] = mock_limiter_depends
 
+import os
+import base64
+import time
+
+# Add parent directory to sys.path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from fastapi.testclient import TestClient
 # Now import main
 from app.main import app
 from app.services.auth import get_db
-import os
-import base64
-import time
 
 # Mock FastAPILimiter init just in case
 mock_limiter.FastAPILimiter.init = AsyncMock()

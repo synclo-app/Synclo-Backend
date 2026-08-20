@@ -53,6 +53,9 @@ class ConnectionManager:
     def get_user_devices(self, user_id: str) -> Dict[str, WebSocket]:
         return self.active_connections.get(user_id, {})
 
+    def is_device_online(self, user_id: str, device_id: str) -> bool:
+        return device_id in self.get_user_devices(user_id)
+
     async def broadcast_to_user(self, user_id: str, message: dict, exclude_device: Optional[str] = None):
         await self._broadcast_local(user_id, message, exclude_device)
 

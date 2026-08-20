@@ -11,6 +11,8 @@ class DeviceOut(BaseModel):
     device_id: str
     device_name: str
     os: Optional[str] = None
+    last_seen: Optional[datetime] = None
+    is_online: bool = False
 
     class Config:
         from_attributes = True
@@ -23,6 +25,7 @@ class ClipboardIn(BaseModel):
     timestamp: datetime  # Client-generated timestamp (ISO 8601)
     is_deleted: bool = False
     is_pinned: bool = False
+    pinned_at: Optional[datetime] = None
 
 class ClipboardOut(BaseModel):
     id: str
@@ -34,6 +37,7 @@ class ClipboardOut(BaseModel):
     is_deleted: bool = False
     deleted_at: Optional[datetime] = None
     is_pinned: bool = False
+    pinned_at: Optional[datetime] = None
 
 
 

@@ -227,8 +227,30 @@ def test_delta_sync():
         # Request offset=2 (should get the rest)
         resp = client.get("/api/v1/clipboard/sync", params={"limit": 2, "offset": 2}, headers=headers)
         data = resp.json()
-        assert len(data["entries"]) >= 1 # We added at least 3 new ones + previous ones
+        assert len(data["entries"]) >= 1
         print("Pagination offset=2 returned items: OK")
+
+        # 12. REST POST /clipboard with is_deleted=True (Tombstone test)
+        tombstone_id = "tombstone_" + os.urandom(4).hex()
+        resp = client.post("/api/v1/clipboard", json={
+            "id": tombstone_id,
+            "ciphertext": None,
+            "nonce": None,
+            "blob_version": 1,
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "is_deleted": True
+        }, headers=headers)
+        assert resp.status_code == 200, f"Failed to post tombstone: {resp.text}"
+        assert resp.json()["status"] == "clipboard deleted"
+        
+        # Verify it is returned in sync as deleted
+        resp = client.get(f"/api/v1/clipboard/{tombstone_id}", headers=headers)
+        assert resp.status_code == 200
+        tombstone_item = resp.json()
+        assert tombstone_item["is_deleted"] is True
+        assert tombstone_item["ciphertext"] is None
+        assert tombstone_item["nonce"] is None
+        print("REST POST /clipboard with is_deleted=True: OK")
 
         print("\nALL TESTS PASSED")
 

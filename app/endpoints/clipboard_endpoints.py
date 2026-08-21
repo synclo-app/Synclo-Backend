@@ -26,7 +26,7 @@ router = APIRouter()
 
 
 @router.post("/clipboard", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
-def sync_clipboard(
+async def sync_clipboard(
     data: ClipboardIn,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -36,8 +36,61 @@ def sync_clipboard(
     # Clean old entries even on write to avoid unbounded growth if user never reads
     cleanup_old_clipboard_entries(user_id, db)
 
+    new_timestamp = data.timestamp.replace(tzinfo=timezone.utc) if data.timestamp.tzinfo is None else data.timestamp
+
+    if data.is_deleted:
+        # Tombstone handling (mirroring WebSocket delete events)
+        existing_entry = db.query(Clipboard).filter_by(clipboard_id=data.id, user_id=user_id).first()
+
+        if existing_entry:
+            _e: Any = existing_entry
+            _e.ciphertext = None
+            _e.nonce = None
+            _e.blob_version = data.blob_version
+            _e.timestamp = new_timestamp
+            _e.is_deleted = True
+            _e.deleted_at = new_timestamp
+            _e.is_pinned = False
+            _e.pinned_at = None
+            _e.updated_at = datetime.now(timezone.utc)
+            db.commit()
+        else:
+            new_entry = Clipboard(
+                clipboard_id=data.id,
+                user_id=user_id,
+                ciphertext=None,
+                nonce=None,
+                blob_version=data.blob_version,
+                timestamp=new_timestamp,
+                is_deleted=True,
+                deleted_at=new_timestamp,
+                is_pinned=False,
+                pinned_at=None,
+                updated_at=datetime.now(timezone.utc)
+            )
+            db.add(new_entry)
+            db.commit()
+
+        # Broadcast deletion to all connected devices
+        await manager.broadcast_to_user(
+            user_id=user_id,
+            message={
+                "id": data.id,
+                "is_deleted": True,
+                "is_pinned": False,
+                "pinned_at": None,
+                "timestamp": new_timestamp.isoformat().replace("+00:00", "Z"),
+                "ciphertext": None,
+                "nonce": None,
+                "blob_version": data.blob_version
+            }
+        )
+
+        return {"status": "clipboard deleted", "id": data.id}
+
+    # Active Entry Handling
     if data.ciphertext is None or data.nonce is None:
-        raise HTTPException(status_code=400, detail="ciphertext and nonce are required")
+        raise HTTPException(status_code=400, detail="ciphertext and nonce are required for active entries")
 
     # Decode base64 binary data
     try:
@@ -53,7 +106,6 @@ def sync_clipboard(
     if len(ciphertext_bytes) > MAX_CIPHERTEXT_LEN:
         raise HTTPException(status_code=400, detail="ciphertext too large")
 
-    new_timestamp = data.timestamp.replace(tzinfo=timezone.utc) if data.timestamp.tzinfo is None else data.timestamp
     pinned_at = None
     if data.is_pinned:
         if data.pinned_at:
@@ -71,6 +123,8 @@ def sync_clipboard(
         _e.nonce = nonce_bytes
         _e.blob_version = data.blob_version
         _e.timestamp = new_timestamp
+        _e.is_deleted = False
+        _e.deleted_at = None
         _e.is_pinned = data.is_pinned
         _e.pinned_at = pinned_at
         _e.updated_at = datetime.now(timezone.utc)
@@ -85,6 +139,8 @@ def sync_clipboard(
             nonce=nonce_bytes,
             blob_version=data.blob_version,
             timestamp=new_timestamp, # Use Client Timestamp
+            is_deleted=False,
+            deleted_at=None,
             is_pinned=data.is_pinned,
             pinned_at=pinned_at,
             updated_at=datetime.now(timezone.utc)

@@ -203,6 +203,8 @@ async def delete_clipboard_item(
 
     # Soft Delete
     _entry.is_deleted = True
+    _entry.ciphertext = None
+    _entry.nonce = None
     _entry.is_pinned = False
     _entry.pinned_at = None
     _entry.deleted_at = datetime.now(timezone.utc)
@@ -251,6 +253,8 @@ async def delete_clipboard_history(
     for entry in active_entries:
         _e: Any = entry
         _e.is_deleted = True
+        _e.ciphertext = None
+        _e.nonce = None
         _e.is_pinned = False
         _e.pinned_at = None
         _e.deleted_at = now

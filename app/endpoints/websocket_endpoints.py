@@ -92,19 +92,19 @@ async def websocket_sync(websocket: WebSocket):
     logger.info(f"WebSocket connection accepted for user_id={user_id}, device_id={device_id}")
     await manager.connect(user_id, device_id, websocket)
 
-    # Dedicated session for last_seen updates (WebSocket has no DI scope)
-    last_seen_session = SessionLocal()
-
     def update_device_last_seen(uid: str, dev_id: str):
+        session = SessionLocal()
         try:
-            dev = last_seen_session.query(Device).filter_by(user_id=uid, device_id=dev_id).first()
+            dev = session.query(Device).filter_by(user_id=uid, device_id=dev_id).first()
             if dev:
                 _d: Any = dev
                 _d.last_seen = datetime.now(timezone.utc)
-                last_seen_session.commit()
+                session.commit()
         except Exception as err:
-            last_seen_session.rollback()
+            session.rollback()
             logger.warning(f"Failed to update device last_seen: {err}")
+        finally:
+            session.close()
 
     await asyncio.to_thread(update_device_last_seen, user_id, device_id)
     
@@ -328,7 +328,4 @@ async def websocket_sync(websocket: WebSocket):
             pass
     finally:
         manager.disconnect(user_id, device_id)
-        try:
-            await asyncio.to_thread(update_device_last_seen, user_id, device_id)
-        finally:
-            last_seen_session.close()
+        await asyncio.to_thread(update_device_last_seen, user_id, device_id)

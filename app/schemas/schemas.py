@@ -116,3 +116,15 @@ class ClipboardSyncResponse(BaseModel):
 class UsernameUpdate(BaseModel):
     username: str
 
+
+class EmailUpdate(BaseModel):
+    email: EmailStr
+
+
+class EmailUpdateResponse(BaseModel):
+    message: str
+    email: EmailStr
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+

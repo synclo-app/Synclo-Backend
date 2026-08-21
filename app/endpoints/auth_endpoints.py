@@ -37,6 +37,8 @@ from app.schemas.schemas import (
     SaltResponse,
     UsernameUpdate,
     UserResponse,
+    EmailUpdate,
+    EmailUpdateResponse,
 )
 from app.services.auth import (
     create_access_token,
@@ -524,6 +526,9 @@ async def update_username(
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+    if not device_id or not (MIN_DEVICE_ID_LEN <= len(device_id) <= MAX_DEVICE_ID_LEN):
+        raise HTTPException(status_code=400, detail="Invalid or missing device_id in token")
+
     # Update in DB
     _cu: Any = current_user
     db_user = db.query(User).filter_by(id=_cu.id).first()
@@ -546,6 +551,92 @@ async def update_username(
     )
     
     return {"message": "Username updated successfully", "username": data.username}
+
+
+@router.put("/user/email", response_model=EmailUpdateResponse, dependencies=[Depends(RateLimiter(times=5, seconds=60))])
+async def update_email(
+    data: EmailUpdate,
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Decode token to extract device_id
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        device_id = payload.get("device_id")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    if not device_id or not (MIN_DEVICE_ID_LEN <= len(device_id) <= MAX_DEVICE_ID_LEN):
+        raise HTTPException(status_code=400, detail="Invalid or missing device_id in token")
+
+    _cu: Any = current_user
+    db_user = db.query(User).filter_by(id=_cu.id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    _dbu: Any = db_user
+    # Explicitly reject if new email is identical to the current email
+    if _dbu.email == data.email:
+        raise HTTPException(status_code=400, detail="New email cannot be the same as current email")
+
+    # Check if email is already taken by another user
+    existing_user = db.query(User).filter(User.email == data.email).first()
+    if existing_user:
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    _dbu.email = data.email
+    try:
+        db.commit()
+        db.refresh(db_user)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    # Generate new access token with updated email in sub
+    access_token = create_access_token(
+        data={"sub": _dbu.email, "device_id": device_id},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+
+    # Generate new refresh token and rotate
+    plain_refresh_token = token_urlsafe(64)
+    hashed_refresh = hash_refresh_token(plain_refresh_token)
+    refresh_expiry = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    token_id = str(uuid4())
+
+    db.query(RefreshToken).filter_by(
+        user_id=_dbu.user_id,
+        device_id=device_id
+    ).delete()
+
+    db.add(RefreshToken(
+        user_id=_dbu.user_id,
+        token=hashed_refresh,
+        expiry=refresh_expiry,
+        device_id=device_id,
+        token_id=token_id,
+        is_revoked=False
+    ))
+    db.commit()
+
+    # Broadcast email_updated event to all other connected devices of the user
+    await manager.broadcast_to_user(
+        user_id=_dbu.user_id,
+        message={
+            "type": "email_updated",
+            "email": data.email
+        },
+        exclude_device=device_id
+    )
+
+    return {
+        "message": "Email updated successfully",
+        "email": data.email,
+        "access_token": access_token,
+        "refresh_token": plain_refresh_token,
+        "token_type": "bearer"
+    }
 
 
 @router.get("/user", response_model=UserResponse, dependencies=[Depends(RateLimiter(times=20, seconds=60))])

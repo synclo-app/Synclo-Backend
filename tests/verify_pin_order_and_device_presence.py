@@ -189,6 +189,7 @@ def test_pin_order_and_device_presence():
                 assert broadcast["pinned_at"] is not None and "2026-08-20T12:30:00" in broadcast["pinned_at"]
 
         # Both disconnected
+        time.sleep(0.1)
         resp = client.get("/api/v1/devices", headers=headers1)
         devices = resp.json()
         for dev in devices:

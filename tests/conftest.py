@@ -6,6 +6,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.pycache_prefix = os.path.join(ROOT_DIR, "__pycache__")
 
 import base64
+import datetime
 import time
 from unittest.mock import MagicMock, AsyncMock
 import pytest
@@ -54,8 +55,37 @@ from app.services.auth import get_db
 from app.core.database import SessionLocal
 
 def generate_random_base64(length=32):
+    """Generate a random base64-encoded string of the given byte length."""
     return base64.b64encode(os.urandom(length)).decode("utf-8")
 
+
+def utc_now_iso():
+    """Return the current UTC time as an ISO 8601 string with 'Z' suffix."""
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def make_clipboard_payload(
+    clip_id,
+    *,
+    is_pinned=False,
+    is_deleted=False,
+    blob_version=1,
+    timestamp=None,
+    pinned_at=None,
+):
+    """Build a clipboard sync payload dict with random encrypted fields."""
+    payload = {
+        "id": clip_id,
+        "ciphertext": generate_random_base64(32),
+        "nonce": generate_random_base64(12),
+        "blob_version": blob_version,
+        "is_deleted": is_deleted,
+        "is_pinned": is_pinned,
+        "timestamp": timestamp or utc_now_iso(),
+    }
+    if pinned_at is not None:
+        payload["pinned_at"] = pinned_at
+    return payload
 
 @pytest.fixture(scope="session")
 def engine():

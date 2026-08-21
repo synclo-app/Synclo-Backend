@@ -59,7 +59,7 @@ def test_user_registration_success(client):
 
 def test_duplicate_user_registration_fails(client, user_factory):
     u = user_factory(email="dup@synclo.app")
-    
+
     # Try registering again with the same email
     payload = {
         "email": "dup@synclo.app",

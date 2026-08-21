@@ -63,7 +63,7 @@ def test_cannot_delete_other_user_device(client, auth_user, user_factory):
 
 def test_device_online_presence_and_token_invalidation(client, user_factory):
     user = user_factory()
-    
+
     # 1. Device 1 connects to WebSocket
     with client.websocket_connect("/ws/v1/sync", headers=user["headers"]) as ws:
         # Check presence -> is_online should be True

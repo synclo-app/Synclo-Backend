@@ -7,31 +7,28 @@ Scenarios Targeted:
 3. Expired sync state rejection returning 410 Gone when 'since' exceeds 30-day tombstone retention period.
 """
 
-import time
 import datetime
-from tests.conftest import generate_random_base64
 
 
-def test_delta_sync_flow_and_tombstones(client, auth_headers):
+def test_delta_sync_flow_and_tombstones(client, auth_headers, clip_payload, now_iso):
     # 1. Initial sync before any items -> empty
     res_initial = client.get("/api/v1/clipboard/sync", headers=auth_headers)
     assert res_initial.status_code == 200
     assert len(res_initial.json()["entries"]) == 0
 
-    t0 = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
-    time.sleep(0.05)
+    # Capture a baseline timestamp from the response Date header,
+    # falling back to current UTC time if the header isn't present.
+    from email.utils import parsedate_to_datetime
+    date_header = res_initial.headers.get("date")
+    if date_header:
+        t0 = parsedate_to_datetime(date_header).isoformat().replace("+00:00", "Z")
+    else:
+        t0 = now_iso()
 
     # 2. Add Item A
     item_a_id = "sync_item_a"
-    res_a = client.post("/api/v1/clipboard", json={
-        "id": item_a_id,
-        "ciphertext": generate_random_base64(32),
-        "nonce": generate_random_base64(12),
-        "blob_version": 1,
-        "is_deleted": False,
-        "is_pinned": False,
-        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
-    }, headers=auth_headers)
+    res_a = client.post("/api/v1/clipboard",
+                        json=clip_payload(item_a_id), headers=auth_headers)
     assert res_a.status_code == 200
 
     # 3. Sync since t0 -> returns Item A
@@ -40,21 +37,13 @@ def test_delta_sync_flow_and_tombstones(client, auth_headers):
     sync_data1 = res_sync1.json()
     assert len(sync_data1["entries"]) == 1
     assert sync_data1["entries"][0]["id"] == item_a_id
+    # Use server's updated_at as cursor for next delta
     t1 = sync_data1["entries"][0]["updated_at"]
-
-    time.sleep(0.05)
 
     # 4. Add Item B
     item_b_id = "sync_item_b"
-    client.post("/api/v1/clipboard", json={
-        "id": item_b_id,
-        "ciphertext": generate_random_base64(32),
-        "nonce": generate_random_base64(12),
-        "blob_version": 1,
-        "is_deleted": False,
-        "is_pinned": False,
-        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
-    }, headers=auth_headers)
+    client.post("/api/v1/clipboard",
+                json=clip_payload(item_b_id), headers=auth_headers)
 
     # 5. Sync since t1 -> returns only Item B
     res_sync2 = client.get("/api/v1/clipboard/sync", params={"since": t1}, headers=auth_headers)
@@ -76,19 +65,11 @@ def test_delta_sync_flow_and_tombstones(client, auth_headers):
     assert all_entries[item_b_id]["is_deleted"] is False
 
 
-def test_delta_sync_pagination(client, auth_headers):
+def test_delta_sync_pagination(client, auth_headers, clip_payload):
     # Insert 5 items
     for i in range(5):
-        client.post("/api/v1/clipboard", json={
-            "id": f"page_item_{i}",
-            "ciphertext": generate_random_base64(32),
-            "nonce": generate_random_base64(12),
-            "blob_version": 1,
-            "is_deleted": False,
-            "is_pinned": False,
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
-        }, headers=auth_headers)
-        time.sleep(0.01)
+        client.post("/api/v1/clipboard",
+                    json=clip_payload(f"page_item_{i}"), headers=auth_headers)
 
     # Fetch page 1 (limit 2, offset 0)
     page1 = client.get("/api/v1/clipboard/sync", params={"limit": 2, "offset": 0}, headers=auth_headers).json()

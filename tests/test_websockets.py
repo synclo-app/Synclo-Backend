@@ -10,17 +10,23 @@ Scenarios Targeted:
 6. Connection rejection (error frame / close 1008) when authentication credentials are missing.
 """
 
-import datetime
-from tests.conftest import generate_random_base64
+from tests.conftest import make_clipboard_payload
+
+
+_MAX_WS_RECV_ATTEMPTS = 50
 
 
 def _receive_non_ping(ws):
-    while True:
+    """Receive the next non-ping message, with a guard against infinite loops."""
+    for _ in range(_MAX_WS_RECV_ATTEMPTS):
         msg = ws.receive_json()
         if msg.get("type") == "ping":
             ws.send_json({"type": "pong"})
             continue
         return msg
+    raise TimeoutError(
+        f"Did not receive a non-ping message after {_MAX_WS_RECV_ATTEMPTS} attempts"
+    )
 
 
 def test_websocket_connect_and_ping(client, auth_user):
@@ -37,16 +43,7 @@ def test_websocket_clipboard_sync_event(client, auth_user):
     with client.websocket_connect("/ws/v1/sync", headers={"Authorization": f"Bearer {token}"}) as ws:
         # Send clipboard item over websocket
         clip_id = "ws_clip_item_01"
-        payload = {
-            "id": clip_id,
-            "ciphertext": generate_random_base64(32),
-            "nonce": generate_random_base64(12),
-            "blob_version": 1,
-            "is_deleted": False,
-            "is_pinned": False,
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
-        }
-        ws.send_json(payload)
+        ws.send_json(make_clipboard_payload(clip_id))
         resp = _receive_non_ping(ws)
         assert resp.get("type") == "ack"
         assert resp.get("id") == clip_id
@@ -55,7 +52,7 @@ def test_websocket_clipboard_sync_event(client, auth_user):
 def test_websocket_broadcast_on_username_update(client, user_factory):
     # Setup user with 2 devices
     user = user_factory(username="orig_name")
-    
+
     # Register device 2
     dev2_res = client.post("/api/v1/login", json={
         "email": user["email"],
@@ -121,15 +118,7 @@ def test_websocket_clipboard_broadcast_to_other_devices(client, user_factory):
     with client.websocket_connect("/ws/v1/sync", headers=user["headers"]) as ws1:
         with client.websocket_connect("/ws/v1/sync", headers={"Authorization": f"Bearer {token_dev2}"}) as ws2:
             clip_id = "broadcast_item_123"
-            ws1.send_json({
-                "id": clip_id,
-                "ciphertext": generate_random_base64(32),
-                "nonce": generate_random_base64(12),
-                "blob_version": 1,
-                "timestamp": "2026-08-20T12:00:00Z",
-                "is_pinned": False,
-                "is_deleted": False,
-            })
+            ws1.send_json(make_clipboard_payload(clip_id, timestamp="2026-08-20T12:00:00Z"))
             ack = _receive_non_ping(ws1)
             assert ack.get("type") == "ack"
 
@@ -140,10 +129,7 @@ def test_websocket_clipboard_broadcast_to_other_devices(client, user_factory):
 
 
 def test_websocket_rejects_missing_auth(client):
-    try:
-        with client.websocket_connect("/ws/v1/sync") as ws:
-            resp = ws.receive_json()
-            assert resp.get("type") == "error"
-    except Exception:
-        # Connection closed with 1008
-        pass
+    with client.websocket_connect("/ws/v1/sync") as ws:
+        msg = ws.receive_json()
+        assert msg.get("type") == "error"
+        assert "Authorization" in msg.get("message", "")

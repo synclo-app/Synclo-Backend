@@ -77,19 +77,10 @@ Refer to this map to find where to add code:
 
 ## 4. Verification Check list for Agents
 
-Before concluding your task, you **must** run the verification suite to ensure no regressions were introduced.
-Use `run_command` to execute the following scripts:
+Before concluding your task, you **must** run the test suite to ensure no regressions were introduced.
+Use `run_command` to execute tests:
 ```bash
-# Verify delta synchronization logic (checks tombstone handling and sync timestamp offsets)
-python -m tests.verify_delta_sync
-
-# Verify device additions and revoking
-python -m tests.verify_device_os
-
-# Verify pagination stability
-python -m tests.verify_offset_pagination
-
-# Verify clipboard pin system logic, bulk delete, and single delete behavior
-python -m tests.verify_clipboard_pin
+# Run the complete standardized pytest suite
+pytest
 ```
-If any of these verification scripts fail, resolve the issues before presenting your solution.
+If any tests fail, resolve the issues before presenting your solution.

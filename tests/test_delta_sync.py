@@ -1,0 +1,115 @@
+"""
+Test Suite: Offline Delta Synchronization, Tombstones & Pagination
+
+Scenarios Targeted:
+1. Incremental delta sync returning only new/updated entries and deleted tombstones after client's last sync time.
+2. Offset and limit based batch pagination across multiple sync items ('limit', 'offset', 'next_offset', 'has_more').
+3. Expired sync state rejection returning 410 Gone when 'since' exceeds 30-day tombstone retention period.
+"""
+
+import time
+import datetime
+from tests.conftest import generate_random_base64
+
+
+def test_delta_sync_flow_and_tombstones(client, auth_headers):
+    # 1. Initial sync before any items -> empty
+    res_initial = client.get("/api/v1/clipboard/sync", headers=auth_headers)
+    assert res_initial.status_code == 200
+    assert len(res_initial.json()["entries"]) == 0
+
+    t0 = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    time.sleep(0.05)
+
+    # 2. Add Item A
+    item_a_id = "sync_item_a"
+    res_a = client.post("/api/v1/clipboard", json={
+        "id": item_a_id,
+        "ciphertext": generate_random_base64(32),
+        "nonce": generate_random_base64(12),
+        "blob_version": 1,
+        "is_deleted": False,
+        "is_pinned": False,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+    }, headers=auth_headers)
+    assert res_a.status_code == 200
+
+    # 3. Sync since t0 -> returns Item A
+    res_sync1 = client.get("/api/v1/clipboard/sync", params={"since": t0}, headers=auth_headers)
+    assert res_sync1.status_code == 200
+    sync_data1 = res_sync1.json()
+    assert len(sync_data1["entries"]) == 1
+    assert sync_data1["entries"][0]["id"] == item_a_id
+    t1 = sync_data1["entries"][0]["updated_at"]
+
+    time.sleep(0.05)
+
+    # 4. Add Item B
+    item_b_id = "sync_item_b"
+    client.post("/api/v1/clipboard", json={
+        "id": item_b_id,
+        "ciphertext": generate_random_base64(32),
+        "nonce": generate_random_base64(12),
+        "blob_version": 1,
+        "is_deleted": False,
+        "is_pinned": False,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+    }, headers=auth_headers)
+
+    # 5. Sync since t1 -> returns only Item B
+    res_sync2 = client.get("/api/v1/clipboard/sync", params={"since": t1}, headers=auth_headers)
+    assert res_sync2.status_code == 200
+    sync_data2 = res_sync2.json()
+    assert len(sync_data2["entries"]) == 1
+    assert sync_data2["entries"][0]["id"] == item_b_id
+
+    # 6. Delete Item A (creating tombstone)
+    client.delete(f"/api/v1/clipboard/{item_a_id}", headers=auth_headers)
+
+    # 7. Sync since t0 -> returns tombstone for A and active B
+    res_sync_all = client.get("/api/v1/clipboard/sync", params={"since": t0}, headers=auth_headers)
+    assert res_sync_all.status_code == 200
+    all_entries = {e["id"]: e for e in res_sync_all.json()["entries"]}
+    assert len(all_entries) == 2
+    assert all_entries[item_a_id]["is_deleted"] is True
+    assert all_entries[item_a_id]["ciphertext"] is None
+    assert all_entries[item_b_id]["is_deleted"] is False
+
+
+def test_delta_sync_pagination(client, auth_headers):
+    # Insert 5 items
+    for i in range(5):
+        client.post("/api/v1/clipboard", json={
+            "id": f"page_item_{i}",
+            "ciphertext": generate_random_base64(32),
+            "nonce": generate_random_base64(12),
+            "blob_version": 1,
+            "is_deleted": False,
+            "is_pinned": False,
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+        }, headers=auth_headers)
+        time.sleep(0.01)
+
+    # Fetch page 1 (limit 2, offset 0)
+    page1 = client.get("/api/v1/clipboard/sync", params={"limit": 2, "offset": 0}, headers=auth_headers).json()
+    assert len(page1["entries"]) == 2
+    assert page1["next_offset"] == 2
+    assert page1["has_more"] is True
+
+    # Fetch page 2 (limit 2, offset 2)
+    page2 = client.get("/api/v1/clipboard/sync", params={"limit": 2, "offset": page1["next_offset"]}, headers=auth_headers).json()
+    assert len(page2["entries"]) == 2
+    assert page2["next_offset"] == 4
+    assert page2["has_more"] is True
+
+    # Fetch page 3 (limit 2, offset 4) -> 1 remaining
+    page3 = client.get("/api/v1/clipboard/sync", params={"limit": 2, "offset": page2["next_offset"]}, headers=auth_headers).json()
+    assert len(page3["entries"]) == 1
+    assert page3["next_offset"] == 5
+    assert page3["has_more"] is False
+
+
+def test_expired_sync_state_returns_410(client, auth_headers):
+    old_time = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=35)).isoformat().replace("+00:00", "Z")
+    res = client.get("/api/v1/clipboard/sync", params={"since": old_time}, headers=auth_headers)
+    assert res.status_code == 410

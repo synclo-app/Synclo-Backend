@@ -23,7 +23,7 @@ class Device(Base):
     device_name = Column(String)
     os = Column(String, nullable=True)
     user_id = Column(String, ForeignKey("users.user_id"), index=True)
-    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=True, index=True)
+    last_seen = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=True, index=True)
 
     owner = relationship("User", back_populates="devices")
 
@@ -35,12 +35,12 @@ class Clipboard(Base):
     ciphertext = Column(LargeBinary, nullable=True)
     nonce = Column(LargeBinary, nullable=True)
     blob_version = Column(Integer, nullable=False, default=1)
-    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     is_deleted = Column(Boolean, default=False, index=True)
-    deleted_at = Column(DateTime, nullable=True, index=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True, index=True)
     is_pinned = Column(Boolean, default=False, server_default="0", index=True, nullable=False)
-    pinned_at = Column(DateTime, nullable=True, index=True)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True, nullable=False)
+    pinned_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True, nullable=False)
 
     owner = relationship("User")
 
@@ -49,7 +49,7 @@ class RefreshToken(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(String, ForeignKey("users.user_id"))
     token = Column(String, unique=True, index=True)
-    expiry = Column(DateTime, index=True)
+    expiry = Column(DateTime(timezone=True), index=True)
     device_id = Column(String, nullable=False)
     
     # New fields for rotation & reuse detection
@@ -63,6 +63,6 @@ class BlacklistedToken(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     token = Column(String, unique=True, nullable=False)
-    expiry = Column(DateTime, nullable=False, index=True)
+    expiry = Column(DateTime(timezone=True), nullable=False, index=True)
 
 

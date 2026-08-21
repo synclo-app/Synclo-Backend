@@ -338,7 +338,7 @@ def logout(
 
         # Avoid unique constraint errors on repeated logout calls
         if not db.query(BlacklistedToken).filter(BlacklistedToken.token == access_token).first():
-            db.add(BlacklistedToken(token=access_token, expiry=datetime.utcfromtimestamp(exp)))
+            db.add(BlacklistedToken(token=access_token, expiry=datetime.fromtimestamp(exp, tz=timezone.utc)))
         db.commit()  # Commit after adding blacklisted token
 
     except JWTError:

@@ -53,8 +53,13 @@ def sync_clipboard(
     if len(ciphertext_bytes) > MAX_CIPHERTEXT_LEN:
         raise HTTPException(status_code=400, detail="ciphertext too large")
 
-    new_timestamp = data.timestamp.replace(tzinfo=None) # Ensure naive for DB comparison if needed
-    pinned_at = (data.pinned_at.replace(tzinfo=None) if data.pinned_at else datetime.now(timezone.utc).replace(tzinfo=None)) if data.is_pinned else None
+    new_timestamp = data.timestamp.replace(tzinfo=timezone.utc) if data.timestamp.tzinfo is None else data.timestamp
+    pinned_at = None
+    if data.is_pinned:
+        if data.pinned_at:
+            pinned_at = data.pinned_at.replace(tzinfo=timezone.utc) if data.pinned_at.tzinfo is None else data.pinned_at
+        else:
+            pinned_at = datetime.now(timezone.utc)
 
     # Upsert Logic: Check if ID exists
     existing_entry = db.query(Clipboard).filter_by(clipboard_id=data.id, user_id=user_id).first()
@@ -219,7 +224,7 @@ async def delete_clipboard_item(
             "is_deleted": True,
             "is_pinned": False,
             "pinned_at": None,
-            "timestamp": _entry.deleted_at.isoformat() + "Z",
+            "timestamp": _entry.deleted_at.isoformat().replace("+00:00", "Z"),
             "ciphertext": None,
             "nonce": None,
             "blob_version": _entry.blob_version
@@ -272,7 +277,7 @@ async def delete_clipboard_history(
                 "is_deleted": True,
                 "is_pinned": False,
                 "pinned_at": None,
-                "timestamp": now.isoformat() + "Z",
+                "timestamp": now.isoformat().replace("+00:00", "Z"),
                 "ciphertext": None,
                 "nonce": None,
                 "blob_version": blob_version

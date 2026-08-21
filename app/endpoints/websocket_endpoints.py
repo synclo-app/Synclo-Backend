@@ -173,7 +173,8 @@ async def websocket_sync(websocket: WebSocket):
                 nonce = None
             
             try:
-                msg_ts = datetime.fromisoformat(msg_ts_str.replace('Z', '+00:00')).replace(tzinfo=None)
+                parsed_ts = datetime.fromisoformat(msg_ts_str.replace('Z', '+00:00'))
+                msg_ts = parsed_ts.replace(tzinfo=timezone.utc) if parsed_ts.tzinfo is None else parsed_ts
             except ValueError:
                 await websocket.send_json({"type": "error", "message": "Invalid timestamp format (ISO8601 required)"})
                 continue
@@ -182,12 +183,13 @@ async def websocket_sync(websocket: WebSocket):
             if is_pinned and not is_deleted:
                 if pinned_at_str:
                     try:
-                        pinned_at_val = datetime.fromisoformat(pinned_at_str.replace('Z', '+00:00')).replace(tzinfo=None)
+                        parsed_pinned_ts = datetime.fromisoformat(pinned_at_str.replace('Z', '+00:00'))
+                        pinned_at_val = parsed_pinned_ts.replace(tzinfo=timezone.utc) if parsed_pinned_ts.tzinfo is None else parsed_pinned_ts
                     except ValueError:
                         await websocket.send_json({"type": "error", "message": "Invalid pinned_at format (ISO8601 required)"})
                         continue
                 else:
-                    pinned_at_val = datetime.now(timezone.utc).replace(tzinfo=None)
+                    pinned_at_val = datetime.now(timezone.utc)
             
             ciphertext_bytes = None
             nonce_bytes = None
@@ -287,13 +289,20 @@ async def websocket_sync(websocket: WebSocket):
                  logger.error(f"DB Error processing clipboard item: {entry_data['error']}")
                  continue
 
+            def format_iso_utc(dt: Any):
+                if dt is None:
+                    return None
+                if hasattr(dt, "isoformat"):
+                    return dt.isoformat().replace("+00:00", "Z")
+                return str(dt)
+
             # Broadcast to other devices (excluding sender)
             broadcast_payload = {
                 "id": entry_data["id"],
-                "timestamp": (entry_data["timestamp"].isoformat() + "Z") if hasattr(entry_data["timestamp"], "isoformat") else str(entry_data["timestamp"]),
+                "timestamp": format_iso_utc(entry_data["timestamp"]),
                 "is_deleted": entry_data["is_deleted"],
                 "is_pinned": entry_data["is_pinned"],
-                "pinned_at": entry_data["pinned_at"].isoformat() + "Z" if entry_data.get("pinned_at") else None,
+                "pinned_at": format_iso_utc(entry_data.get("pinned_at")),
                 "blob_version": entry_data["blob_version"]
             }
             

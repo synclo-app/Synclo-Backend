@@ -4,9 +4,8 @@ from app.models.models import BlacklistedToken, RefreshToken, Clipboard
 
 def cleanup_expired_blacklisted_tokens(db: Session):
     try:
-        # DB stores naive UTC
-        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
-        db.query(BlacklistedToken).filter(BlacklistedToken.expiry < now_naive).delete()
+        now_utc = datetime.now(timezone.utc)
+        db.query(BlacklistedToken).filter(BlacklistedToken.expiry < now_utc).delete()
         db.commit()
     except Exception:
         db.rollback()
@@ -15,9 +14,8 @@ def cleanup_expired_blacklisted_tokens(db: Session):
 
 def cleanup_expired_refresh_tokens(db: Session):
     try:
-        # DB stores naive UTC
-        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
-        db.query(RefreshToken).filter(RefreshToken.expiry < now_naive).delete()
+        now_utc = datetime.now(timezone.utc)
+        db.query(RefreshToken).filter(RefreshToken.expiry < now_utc).delete()
         db.commit()
     except Exception:
         db.rollback()
@@ -33,8 +31,7 @@ def cleanup_old_tombstones(db: Session):
     try:
         from app.core.config import Settings
         retention_days = Settings.TOMBSTONE_RETENTION_DAYS
-        # DB stores naive UTC
-        cutoff_date = (datetime.now(timezone.utc) - timedelta(days=retention_days)).replace(tzinfo=None)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
         
         db.query(Clipboard).filter(
             Clipboard.is_deleted.is_(True),

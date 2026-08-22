@@ -1,3 +1,4 @@
+import logging
 import os
 import tomllib
 from pathlib import Path
@@ -5,21 +6,24 @@ from dotenv import load_dotenv
 
 load_dotenv()  # Loads from .env file
 
-# Load project metadata from pyproject.toml if present
+_logger = logging.getLogger(__name__)
+
+# Load project metadata from pyproject.toml (required)
 _pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
-_pyproject_data = {}
-if _pyproject_path.exists():
-    try:
-        with open(_pyproject_path, "rb") as _f:
-            _pyproject_data = tomllib.load(_f).get("project", {})
-    except Exception:
-        pass
+if not _pyproject_path.exists():
+    raise RuntimeError(f"pyproject.toml not found at {_pyproject_path}")
+
+try:
+    with open(_pyproject_path, "rb") as _f:
+        _pyproject_data = tomllib.load(_f).get("project", {})
+except Exception as _e:
+    raise RuntimeError(f"Failed to parse pyproject.toml: {_e}") from _e
 
 
 class Settings:
-    PROJECT_NAME: str = _pyproject_data.get("name")
-    VERSION: str = _pyproject_data.get("version")
-    DESCRIPTION: str = _pyproject_data.get("description")
+    PROJECT_NAME: str = _pyproject_data["name"]
+    VERSION: str = _pyproject_data["version"]
+    DESCRIPTION: str = _pyproject_data["description"]
 
     # JWT
     SECRET_KEY = os.getenv("SECRET_KEY")

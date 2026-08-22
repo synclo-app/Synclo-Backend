@@ -19,7 +19,11 @@ from app.endpoints.device_endpoints import router as device_router
 from app.endpoints.clipboard_endpoints import router as clipboard_router
 from app.endpoints.websocket_endpoints import router as websocket_router
 
-app = FastAPI()
+app = FastAPI(
+    title=Settings.PROJECT_NAME,
+    version=Settings.VERSION,
+    description=Settings.DESCRIPTION,
+)
 
 # Include routers
 app.include_router(auth_router, prefix="/api/v1")
